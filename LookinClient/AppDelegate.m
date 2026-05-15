@@ -16,6 +16,7 @@
 #import "NSString+Score.h"
 #import "LookinDashboardBlueprint.h"
 #import "LKPreferenceManager.h"
+#import "LKMCPBridgeServer.h"
 @import AppCenter;
 @import AppCenterAnalytics;
 @import AppCenterCrashes;
@@ -49,6 +50,7 @@
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {    
     [LKConnectionManager sharedInstance];
+    [[LKMCPBridgeServer sharedInstance] start];
     if (!self.launchedToOpenFile) {
         [[LKNavigationManager sharedInstance] showLaunch];
     }

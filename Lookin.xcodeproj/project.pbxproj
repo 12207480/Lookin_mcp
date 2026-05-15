@@ -102,6 +102,7 @@
 		AA98EC9C22270B800083348D /* LKPreferencePopupView.m in Sources */ = {isa = PBXBuildFile; fileRef = AA98EC9A22270B800083348D /* LKPreferencePopupView.m */; };
 		AA9A3D732269DDCE00BE46C7 /* LKConsoleViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = AA9A3D6D2269DDCD00BE46C7 /* LKConsoleViewController.m */; };
 		AA9CC2C522891EA20014D13B /* LKExportAccessoryView.m in Sources */ = {isa = PBXBuildFile; fileRef = AA9CC2C422891EA20014D13B /* LKExportAccessoryView.m */; };
+		C0DE00000000000000000001 /* LKMCPBridgeServer.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE00000000000000000003 /* LKMCPBridgeServer.m */; };
 		AAA8C11D21CC17680017A345 /* LKInspectableApp.m in Sources */ = {isa = PBXBuildFile; fileRef = AAA8C08A21CC17670017A345 /* LKInspectableApp.m */; };
 		AAA8C11E21CC17680017A345 /* LKAppsManager.m in Sources */ = {isa = PBXBuildFile; fileRef = AAA8C08B21CC17670017A345 /* LKAppsManager.m */; };
 		AAA8C11F21CC17680017A345 /* LKConnectionManager.m in Sources */ = {isa = PBXBuildFile; fileRef = AAA8C08C21CC17670017A345 /* LKConnectionManager.m */; };
@@ -459,6 +460,8 @@
 		AAA8C11121CC17680017A345 /* LKStaticViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = LKStaticViewController.m; sourceTree = "<group>"; };
 		AAA8C11221CC17680017A345 /* LKStaticWindowController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = LKStaticWindowController.m; sourceTree = "<group>"; };
 		AAA8C11321CC17680017A345 /* AppDelegate.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
+		C0DE00000000000000000002 /* LKMCPBridgeServer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = LKMCPBridgeServer.h; sourceTree = "<group>"; };
+		C0DE00000000000000000003 /* LKMCPBridgeServer.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = LKMCPBridgeServer.m; sourceTree = "<group>"; };
 		AAA8C11521CC17680017A345 /* LKLaunchAppView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = LKLaunchAppView.h; sourceTree = "<group>"; };
 		AAA8C11621CC17680017A345 /* LKLaunchViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = LKLaunchViewController.m; sourceTree = "<group>"; };
 		AAA8C11721CC17680017A345 /* LKLaunchWindowController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = LKLaunchWindowController.h; sourceTree = "<group>"; };
@@ -860,6 +863,7 @@
 				AA08FC9322DF99E700F65B20 /* Tutorial */,
 				AA0757B922C606F3005535DC /* Export */,
 				AA0757C122C607D7005535DC /* Manager */,
+				C0DE00000000000000000004 /* MCP */,
 				AA50753722A269F600D2A5AC /* Console */,
 				AAA8C08721CC17670017A345 /* Connection */,
 				AAA8C0F721CC17680017A345 /* Toolbar */,
@@ -928,6 +932,15 @@
 				AAA8C08A21CC17670017A345 /* LKInspectableApp.m */,
 			);
 			path = Connection;
+			sourceTree = "<group>";
+		};
+		C0DE00000000000000000004 /* MCP */ = {
+			isa = PBXGroup;
+			children = (
+				C0DE00000000000000000002 /* LKMCPBridgeServer.h */,
+				C0DE00000000000000000003 /* LKMCPBridgeServer.m */,
+			);
+			path = MCP;
 			sourceTree = "<group>";
 		};
 		AAA8C08F21CC17670017A345 /* Base */ = {
@@ -1413,6 +1426,7 @@
 				AAE61CCB22A5023000B3FB9F /* LKInputSearchSuggestionsContentView.m in Sources */,
 				AA0A2DDB233F81D9008BF946 /* LKPopPanel.m in Sources */,
 				AAA8C15D21CC17680017A345 /* AppDelegate.m in Sources */,
+				C0DE00000000000000000001 /* LKMCPBridgeServer.m in Sources */,
 				AAB872E6221C26B600C25294 /* LKStaticAsyncUpdateManager.m in Sources */,
 				AAB636C022B3854100885A2C /* LKDashboardAttributeClassView.m in Sources */,
 				AAA8C12E21CC17680017A345 /* LKHierarchyView.m in Sources */,
