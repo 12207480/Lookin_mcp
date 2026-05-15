@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Read-only MCP server for inspecting exported Lookin `.lookin` files.
+MCP server for inspecting exported Lookin `.lookin` files and driving a small
+set of guarded live Lookin operations.
 
 The `.lookin` document format is an NSKeyedArchive. This server intentionally
 does not depend on Lookin app runtime classes; it decodes the archive shape
@@ -644,6 +645,37 @@ def live_snapshot_archive(params: Dict[str, Any]) -> LookinArchive:
         ) from exc
 
 
+def bridge_post_json(params: Dict[str, Any], path: str, payload: Dict[str, Any], timeout: int = 10) -> Dict[str, Any]:
+    url = f"{bridge_url(params)}{path}"
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method="POST",
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json; charset=utf-8",
+            "Content-Length": str(len(data)),
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        message = exc.read().decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(message)
+            message = payload.get("error") or payload.get("recoverySuggestion") or message
+        except json.JSONDecodeError:
+            pass
+        raise ToolError(f"Lookin live bridge returned HTTP {exc.code}: {message}") from exc
+    except urllib.error.URLError as exc:
+        raise ToolError(
+            "Cannot connect to Lookin live bridge. Start the updated Lookin app first, "
+            f"then retry. Detail: {exc.reason}"
+        ) from exc
+
+
 def tool_live_status(params: Dict[str, Any]) -> str:
     response_format = parse_response_format(params.get("response_format"))
     url = f"{bridge_url(params)}/status"
@@ -854,6 +886,106 @@ def tool_live_capture_current_layer_screenshot(params: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def tool_live_invoke_method(params: Dict[str, Any]) -> str:
+    response_format = parse_response_format(params.get("response_format"))
+    method = str(params.get("method") or "").strip()
+    if not method:
+        raise ToolError("method is required.")
+    if ":" in method:
+        raise ToolError("Only no-argument methods/properties are supported.")
+
+    payload: Dict[str, Any] = {"method": method}
+    if params.get("oid") is not None:
+        payload["oid"] = params["oid"]
+    if params.get("target") is not None:
+        payload["target"] = params["target"]
+
+    result = bridge_post_json(params, "/invoke-method", payload)
+    if response_format == ResponseFormat.JSON:
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    lines = [
+        "# Invoke Method",
+        f"- Method: `{result.get('method') or method}`",
+        f"- Oid: `{result.get('oid') or payload.get('oid') or ''}`",
+    ]
+    return "\n".join(lines)
+
+
+def tool_live_set_selected_frame(params: Dict[str, Any]) -> str:
+    response_format = parse_response_format(params.get("response_format"))
+    payload: Dict[str, Any] = {}
+    for key in ("x", "y", "width", "height"):
+        if params.get(key) is None:
+            raise ToolError("x, y, width and height are required.")
+        try:
+            payload[key] = float(params[key])
+        except (TypeError, ValueError) as exc:
+            raise ToolError(f"{key} must be a number.") from exc
+
+    result = bridge_post_json(params, "/selected-frame", payload)
+    if response_format == ResponseFormat.JSON:
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    frame = result.get("frame") if isinstance(result.get("frame"), dict) else payload
+    lines = [
+        "# Selected Layer Frame",
+        f"- Modified: {'yes' if result.get('modified') else 'no'}",
+        f"- Layer oid: `{result.get('layerOid') or ''}`",
+        f"- Frame: `{json.dumps(frame, ensure_ascii=False)}`",
+    ]
+    return "\n".join(lines)
+
+
+def tool_live_set_view_property(params: Dict[str, Any]) -> str:
+    response_format = parse_response_format(params.get("response_format"))
+    prop = str(params.get("property") or "").strip()
+    if not prop:
+        raise ToolError("property is required.")
+    if "value" not in params:
+        raise ToolError("value is required.")
+
+    payload: Dict[str, Any] = {"property": prop, "value": params["value"]}
+    if params.get("oid") is not None:
+        payload["oid"] = params["oid"]
+    result = bridge_post_json(params, "/set-property", payload)
+    if response_format == ResponseFormat.JSON:
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    lines = [
+        "# Set View Property",
+        f"- Property: `{result.get('property') or prop}`",
+        f"- Target: `{result.get('target') or ''}`",
+        f"- Target oid: `{result.get('targetOid') or ''}`",
+        f"- Attr id: `{result.get('attr_id') or ''}`",
+    ]
+    return "\n".join(lines)
+
+
+def tool_live_set_constraint_property(params: Dict[str, Any]) -> str:
+    response_format = parse_response_format(params.get("response_format"))
+    oid = params.get("oid")
+    prop = str(params.get("property") or "").strip()
+    if oid is None:
+        raise ToolError("oid is required and must be an NSLayoutConstraint object oid.")
+    if not prop:
+        raise ToolError("property is required.")
+    if "value" not in params:
+        raise ToolError("value is required.")
+
+    payload = {"oid": oid, "property": prop, "value": params["value"]}
+    result = bridge_post_json(params, "/set-constraint-property", payload)
+    if response_format == ResponseFormat.JSON:
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    lines = [
+        "# Set Constraint Property",
+        f"- Property: `{result.get('property') or prop}`",
+        f"- Target oid: `{result.get('targetOid') or oid}`",
+    ]
+    return "\n".join(lines)
+
+
 TOOLS = {
     "lookin_live_status": {
         "description": "Check whether the updated Lookin app local live bridge is reachable and has a connected app.",
@@ -952,6 +1084,114 @@ TOOLS = {
                 },
                 "response_format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown"},
             },
+            "additionalProperties": False,
+        },
+    },
+    "lookin_live_invoke_method": {
+        "description": "Invoke a no-argument method/property on the selected live object or an explicit object oid.",
+        "handler": tool_live_invoke_method,
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "bridge_url": {"type": "string", "default": DEFAULT_BRIDGE_URL},
+                "method": {"type": "string", "description": "No-argument Objective-C selector or property name."},
+                "target": {
+                    "type": "string",
+                    "enum": ["selected_view", "selected_layer", "selected_controller", "view", "layer", "controller"],
+                    "default": "selected_view",
+                },
+                "oid": {
+                    "type": ["integer", "string"],
+                    "description": "Optional explicit Lookin object oid. When set, target is ignored.",
+                },
+                "response_format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown"},
+            },
+            "required": ["method"],
+            "additionalProperties": False,
+        },
+    },
+    "lookin_live_set_selected_frame": {
+        "description": "Set the frame of the currently selected live hierarchy item's backing layer.",
+        "handler": tool_live_set_selected_frame,
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "bridge_url": {"type": "string", "default": DEFAULT_BRIDGE_URL},
+                "x": {"type": "number"},
+                "y": {"type": "number"},
+                "width": {"type": "number"},
+                "height": {"type": "number"},
+                "response_format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown"},
+            },
+            "required": ["x", "y", "width", "height"],
+            "additionalProperties": False,
+        },
+    },
+    "lookin_live_set_view_property": {
+        "description": "Set a supported property on the selected live view/layer, including common UIView, UILabel, UIButton, UIImageView, UIScrollView, UITableView, UICollectionView, UITableViewCell, UICollectionViewCell, UITextView and UITextField properties.",
+        "handler": tool_live_set_view_property,
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "bridge_url": {"type": "string", "default": DEFAULT_BRIDGE_URL},
+                "property": {
+                    "type": "string",
+                    "description": "Supported alias such as text, textColor, fontSize, hidden, alpha, backgroundColor, cornerRadius, enabled, highlighted, cellSelected, contentEdgeInsets, contentOffset, scrollEnabled, separatorColor, huggingHorizontal.",
+                },
+                "value": {
+                    "type": ["string", "number", "boolean", "object", "array"],
+                    "description": "Property value. Colors accept #RRGGBB/#RRGGBBAA, [r,g,b,a], or {r,g,b,a}. Rect/point/size/insets use JSON objects.",
+                },
+                "oid": {
+                    "type": ["integer", "string"],
+                    "description": "Optional explicit target object oid. Defaults to the selected view or layer based on the property.",
+                },
+                "response_format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown"},
+            },
+            "required": ["property", "value"],
+            "additionalProperties": False,
+        },
+    },
+    "lookin_live_set_constraint_property": {
+        "description": "Set constant, priority, or active on an explicit NSLayoutConstraint object oid.",
+        "handler": tool_live_set_constraint_property,
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": False,
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "bridge_url": {"type": "string", "default": DEFAULT_BRIDGE_URL},
+                "oid": {
+                    "type": ["integer", "string"],
+                    "description": "Explicit NSLayoutConstraint object oid.",
+                },
+                "property": {"type": "string", "enum": ["constant", "priority", "active"]},
+                "value": {"type": ["number", "boolean", "string"], "description": "Number for constant/priority, boolean for active."},
+                "response_format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown"},
+            },
+            "required": ["oid", "property", "value"],
             "additionalProperties": False,
         },
     },
