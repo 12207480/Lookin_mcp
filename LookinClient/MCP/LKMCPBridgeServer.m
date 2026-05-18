@@ -29,6 +29,21 @@ static const uint16_t LKMCPBridgePort = 47638;
 static const size_t LKMCPBridgeMaxRequestLength = 8192;
 static const size_t LKMCPBridgeMaxBodyLength = 65536;
 
+static NSSet<NSString *> *LKMCPAllowedInvokeMethods(void) {
+    static NSSet<NSString *> *methods = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        methods = [NSSet setWithArray:@[
+            @"setNeedsLayout",
+            @"layoutIfNeeded",
+            @"setNeedsDisplay",
+            @"reloadData",
+            @"reloadInputViews"
+        ]];
+    });
+    return methods;
+}
+
 @interface LKMCPBridgeServer ()
 
 @property(nonatomic, assign) int serverSocket;
@@ -178,6 +193,17 @@ static const size_t LKMCPBridgeMaxBodyLength = 65536;
         return;
     }
 
+    if ([path isEqualToString:@"/selected-item"]) {
+        if (![method isEqualToString:@"GET"]) {
+            [self _writeJSON:@{@"error": @"Use GET for /selected-item."} status:405 client:clientFD];
+            return;
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self _handleSelectedItemWithClient:clientFD];
+        });
+        return;
+    }
+
     if ([path isEqualToString:@"/snapshot"]) {
         if (![method isEqualToString:@"GET"]) {
             [self _writeJSON:@{@"error": @"Use GET for /snapshot."} status:405 client:clientFD];
@@ -244,6 +270,40 @@ static const size_t LKMCPBridgeMaxBodyLength = 65536;
     NSDictionary *appInfo = [self _dictionaryFromAppInfo:app.appInfo ?: cachedInfo.appInfo];
     if (appInfo) {
         payload[@"app"] = appInfo;
+    }
+
+    [self _writeJSON:payload status:200 client:clientFD];
+}
+
+- (void)_handleSelectedItemWithClient:(int)clientFD {
+    LookinDisplayItem *item = [LKStaticHierarchyDataSource sharedInstance].selectedItem;
+    if (!item) {
+        [self _writeJSON:@{@"error": @"No selected hierarchy item."} status:409 client:clientFD];
+        return;
+    }
+
+    NSMutableDictionary *payload = [@{
+        @"title": item.title ?: @"",
+        @"subtitle": item.subtitle ?: @"",
+        @"depth": @(item.indentLevel),
+        @"child_count": @(item.subitems.count),
+        @"hidden": @(item.inHiddenHierarchy),
+        @"displaying": @(item.displayingInHierarchy),
+        @"frame": [self _dictionaryFromRect:item.frame],
+        @"bounds": [self _dictionaryFromRect:item.bounds]
+    } mutableCopy];
+
+    NSDictionary *view = [self _dictionaryFromObject:item.viewObject];
+    NSDictionary *layer = [self _dictionaryFromObject:item.layerObject];
+    NSDictionary *controller = [self _dictionaryFromObject:item.hostViewControllerObject];
+    if (view) {
+        payload[@"view"] = view;
+    }
+    if (layer) {
+        payload[@"layer"] = layer;
+    }
+    if (controller) {
+        payload[@"controller"] = controller;
     }
 
     [self _writeJSON:payload status:200 client:clientFD];
@@ -350,6 +410,10 @@ static const size_t LKMCPBridgeMaxBodyLength = 65536;
     }
     if ([text containsString:@":"]) {
         [self _writeJSON:@{@"error": @"Methods with arguments are not supported."} status:400 client:clientFD];
+        return;
+    }
+    if (![LKMCPAllowedInvokeMethods() containsObject:text]) {
+        [self _writeJSON:@{@"error": @"Unsupported method. Use one of the allowed no-argument methods."} status:400 client:clientFD];
         return;
     }
 
@@ -1024,6 +1088,39 @@ static const size_t LKMCPBridgeMaxBodyLength = 65536;
         dict[@"serverReadableVersion"] = appInfo.serverReadableVersion;
     }
     return dict.copy;
+}
+
+- (NSDictionary *)_dictionaryFromObject:(LookinObject *)object {
+    if (!object) {
+        return nil;
+    }
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+    if (object.oid) {
+        dict[@"oid"] = @(object.oid);
+    }
+    NSString *rawClassName = [object rawClassName];
+    if (rawClassName.length) {
+        dict[@"rawClassName"] = rawClassName;
+    }
+    if (object.classChainList.count) {
+        dict[@"classChainList"] = object.classChainList;
+    }
+    if (object.memoryAddress.length) {
+        dict[@"memoryAddress"] = object.memoryAddress;
+    }
+    if (object.specialTrace.length) {
+        dict[@"specialTrace"] = object.specialTrace;
+    }
+    return dict.copy;
+}
+
+- (NSDictionary *)_dictionaryFromRect:(CGRect)rect {
+    return @{
+        @"x": @(CGRectGetMinX(rect)),
+        @"y": @(CGRectGetMinY(rect)),
+        @"width": @(CGRectGetWidth(rect)),
+        @"height": @(CGRectGetHeight(rect))
+    };
 }
 
 - (NSDictionary *)_dictionaryFromError:(NSError *)error {

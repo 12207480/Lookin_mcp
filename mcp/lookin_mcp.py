@@ -26,12 +26,108 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 
 SERVER_NAME = "lookin_mcp"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 DEFAULT_BRIDGE_URL = "http://127.0.0.1:47638"
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 MAX_DETAIL_BYTES = 256
 LIVE_TIMEOUT_SECONDS = 20
+LIVE_CACHE_TTL_SECONDS = 5
+ALLOWED_INVOKE_METHODS = {
+    "setNeedsLayout",
+    "layoutIfNeeded",
+    "setNeedsDisplay",
+    "reloadData",
+    "reloadInputViews",
+}
+
+WRITABLE_PROPERTY_GROUPS = {
+    "view_layer": [
+        "frame",
+        "bounds",
+        "position",
+        "anchorPoint",
+        "hidden",
+        "alpha",
+        "opacity",
+        "userInteractionEnabled",
+        "masksToBounds",
+        "clipsToBounds",
+        "cornerRadius",
+        "backgroundColor",
+        "borderColor",
+        "borderWidth",
+        "tintColor",
+        "contentMode",
+        "tag",
+    ],
+    "autolayout_priority": [
+        "huggingHorizontal",
+        "huggingVertical",
+        "compressionResistanceHorizontal",
+        "compressionResistanceVertical",
+    ],
+    "label": [
+        "text",
+        "labelText",
+        "numberOfLines",
+        "fontSize",
+        "textColor",
+        "textAlignment",
+        "lineBreakMode",
+        "adjustsFontSizeToFitWidth",
+    ],
+    "button_control": [
+        "enabled",
+        "selected",
+        "contentVerticalAlignment",
+        "contentHorizontalAlignment",
+        "contentEdgeInsets",
+        "titleEdgeInsets",
+        "imageEdgeInsets",
+    ],
+    "scroll_view": [
+        "contentOffset",
+        "contentSize",
+        "contentInset",
+        "qmuiInitialContentInset",
+        "contentInsetAdjustmentBehavior",
+        "scrollIndicatorInsets",
+        "scrollEnabled",
+        "pagingEnabled",
+        "alwaysBounceVertical",
+        "alwaysBounceHorizontal",
+        "showsHorizontalScrollIndicator",
+        "showsVerticalScrollIndicator",
+        "delaysContentTouches",
+        "canCancelContentTouches",
+        "minimumZoomScale",
+        "maximumZoomScale",
+        "zoomScale",
+        "bouncesZoom",
+    ],
+    "table_view": ["separatorInset", "separatorColor", "separatorStyle"],
+    "cell": ["highlighted", "cellSelected", "selectionStyle", "accessoryType", "editing"],
+    "text_view": [
+        "textViewText",
+        "textViewFontSize",
+        "textViewTextColor",
+        "textViewTextAlignment",
+        "editable",
+        "selectable",
+        "textContainerInset",
+    ],
+    "text_field": [
+        "textFieldText",
+        "placeholder",
+        "textFieldFontSize",
+        "textFieldTextColor",
+        "textFieldTextAlignment",
+        "clearsOnBeginEditing",
+        "clearsOnInsertion",
+        "minimumFontSize",
+    ],
+}
 
 
 class ResponseFormat(str, Enum):
@@ -41,6 +137,17 @@ class ResponseFormat(str, Enum):
 
 class ToolError(Exception):
     pass
+
+
+@dataclass
+class LiveSnapshotCacheEntry:
+    bridge_url: str
+    data: bytes
+    source: str
+    created_at: float
+
+
+LIVE_SNAPSHOT_CACHE: Optional[LiveSnapshotCacheEntry] = None
 
 
 @dataclass(frozen=True)
@@ -615,12 +722,22 @@ def bridge_url(params: Dict[str, Any]) -> str:
     return raw
 
 
-def live_snapshot_archive(params: Dict[str, Any]) -> LookinArchive:
+def live_snapshot_archive(params: Dict[str, Any], default_refresh: bool = True) -> LookinArchive:
+    global LIVE_SNAPSHOT_CACHE
     base_url = bridge_url(params)
-    refresh = bool(params.get("refresh", True))
+    refresh = bool(params.get("refresh", default_refresh))
     compression = float(params.get("compression", 0.5))
+    cache_ttl = float(params.get("cache_ttl_seconds", LIVE_CACHE_TTL_SECONDS))
     if compression < 0.01 or compression > 1:
         raise ToolError("compression must be between 0.01 and 1.")
+    if cache_ttl < 0:
+        raise ToolError("cache_ttl_seconds must be greater than or equal to 0.")
+
+    if not refresh and LIVE_SNAPSHOT_CACHE and LIVE_SNAPSHOT_CACHE.bridge_url == base_url:
+        age = time.time() - LIVE_SNAPSHOT_CACHE.created_at
+        if age <= cache_ttl:
+            source = f"{LIVE_SNAPSHOT_CACHE.source}; python-cache age={age:.1f}s"
+            return LookinArchive(f"<lookin live snapshot: {source}>", data=LIVE_SNAPSHOT_CACHE.data)
 
     query = urllib.parse.urlencode({"refresh": "1" if refresh else "0", "compression": str(compression)})
     url = f"{base_url}/snapshot?{query}"
@@ -629,6 +746,7 @@ def live_snapshot_archive(params: Dict[str, Any]) -> LookinArchive:
         with urllib.request.urlopen(request, timeout=LIVE_TIMEOUT_SECONDS) as response:
             data = response.read()
             source = response.headers.get("X-Lookin-Live-Source", "live")
+            LIVE_SNAPSHOT_CACHE = LiveSnapshotCacheEntry(base_url, data, source, time.time())
             return LookinArchive(f"<lookin live snapshot: {source}>", data=data)
     except urllib.error.HTTPError as exc:
         message = exc.read().decode("utf-8", errors="replace")
@@ -702,6 +820,72 @@ def tool_live_status(params: Dict[str, Any]) -> str:
     if isinstance(app, dict):
         lines.extend(["", "## App"])
         lines.extend(f"- {key}: {value}" for key, value in app.items())
+    return "\n".join(lines)
+
+
+def tool_live_get_selected_item(params: Dict[str, Any]) -> str:
+    response_format = parse_response_format(params.get("response_format"))
+    url = f"{bridge_url(params)}/selected-item"
+    request = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        message = exc.read().decode("utf-8", errors="replace")
+        try:
+            error_payload = json.loads(message)
+            message = error_payload.get("error") or error_payload.get("recoverySuggestion") or message
+        except json.JSONDecodeError:
+            pass
+        raise ToolError(f"Lookin live bridge returned HTTP {exc.code}: {message}") from exc
+    except urllib.error.URLError as exc:
+        raise ToolError(
+            "Cannot connect to Lookin live bridge. Start the updated Lookin app first, "
+            f"then retry. Detail: {exc.reason}"
+        ) from exc
+
+    if response_format == ResponseFormat.JSON:
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    lines = [
+        "# Selected Live Item",
+        f"- Title: {payload.get('title') or ''}",
+        f"- Subtitle: {payload.get('subtitle') or ''}",
+        f"- Depth: {payload.get('depth')}",
+        f"- Children: {payload.get('child_count')}",
+        f"- View: `{json.dumps(payload.get('view'), ensure_ascii=False)}`",
+        f"- Layer: `{json.dumps(payload.get('layer'), ensure_ascii=False)}`",
+        f"- Controller: `{json.dumps(payload.get('controller'), ensure_ascii=False)}`",
+        f"- Frame: `{json.dumps(payload.get('frame'), ensure_ascii=False)}`",
+        f"- Bounds: `{json.dumps(payload.get('bounds'), ensure_ascii=False)}`",
+    ]
+    return "\n".join(lines)
+
+
+def tool_live_list_writable_properties(params: Dict[str, Any]) -> str:
+    response_format = parse_response_format(params.get("response_format"))
+    result = {
+        "allowed_invoke_methods": sorted(ALLOWED_INVOKE_METHODS),
+        "constraint_properties": ["constant", "priority", "active"],
+        "property_groups": WRITABLE_PROPERTY_GROUPS,
+        "value_formats": {
+            "color": "#RRGGBB, #RRGGBBAA, [r,g,b,a], or {r,g,b,a}",
+            "rect": {"x": 0, "y": 0, "width": 100, "height": 44},
+            "point": {"x": 0, "y": 0},
+            "size": {"width": 100, "height": 44},
+            "insets": {"top": 0, "left": 0, "bottom": 0, "right": 0},
+        },
+    }
+    if response_format == ResponseFormat.JSON:
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    lines = ["# Writable Lookin Properties", "", "## Allowed No-Argument Methods"]
+    lines.extend(f"- `{method}`" for method in result["allowed_invoke_methods"])
+    lines.extend(["", "## Constraint Properties"])
+    lines.extend(f"- `{prop}`" for prop in result["constraint_properties"])
+    for group, props in WRITABLE_PROPERTY_GROUPS.items():
+        lines.extend(["", f"## {group}"])
+        lines.extend(f"- `{prop}`" for prop in props)
     return "\n".join(lines)
 
 
@@ -802,7 +986,7 @@ def tool_live_get_item(params: Dict[str, Any]) -> str:
         raise ToolError("item_id is required. Use lookin_live_list_hierarchy or lookin_live_search_hierarchy first.")
     response_format = parse_response_format(params.get("response_format"))
     include_raw = bool(params.get("include_raw", False))
-    archive = live_snapshot_archive(params)
+    archive = live_snapshot_archive(params, default_refresh=False)
     item = find_item(archive, item_id, include_raw=include_raw)
     result = {"source": archive.path, **item.detailed()}
     if response_format == ResponseFormat.JSON:
@@ -893,6 +1077,9 @@ def tool_live_invoke_method(params: Dict[str, Any]) -> str:
         raise ToolError("method is required.")
     if ":" in method:
         raise ToolError("Only no-argument methods/properties are supported.")
+    if method not in ALLOWED_INVOKE_METHODS:
+        allowed = ", ".join(sorted(ALLOWED_INVOKE_METHODS))
+        raise ToolError(f"Unsupported method. Allowed no-argument methods: {allowed}.")
 
     payload: Dict[str, Any] = {"method": method}
     if params.get("oid") is not None:
@@ -999,6 +1186,29 @@ TOOLS = {
             "additionalProperties": False,
         },
     },
+    "lookin_live_get_selected_item": {
+        "description": "Get the currently selected Lookin hierarchy item without refreshing the full live snapshot.",
+        "handler": tool_live_get_selected_item,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "bridge_url": {"type": "string", "default": DEFAULT_BRIDGE_URL},
+                "response_format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    "lookin_live_list_writable_properties": {
+        "description": "List supported live write property aliases, value formats, constraint properties, and allowed no-argument methods.",
+        "handler": tool_live_list_writable_properties,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "response_format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown"},
+            },
+            "additionalProperties": False,
+        },
+    },
     "lookin_live_inspect_current": {
         "description": "Fetch and inspect a live snapshot from the currently connected Lookin app.",
         "handler": tool_live_inspect_current,
@@ -1048,14 +1258,24 @@ TOOLS = {
         },
     },
     "lookin_live_get_item": {
-        "description": "Fetch a live snapshot from the currently connected Lookin app and get one hierarchy item.",
+        "description": "Get one hierarchy item from the recent live snapshot by listed item id, object oid, or memory address.",
         "handler": tool_live_get_item,
         "inputSchema": {
             "type": "object",
             "properties": {
                 "bridge_url": {"type": "string", "default": DEFAULT_BRIDGE_URL},
-                "refresh": {"type": "boolean", "default": True},
+                "refresh": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Defaults to false to reuse the latest live snapshot after list/search. Set true to force a fresh hierarchy fetch.",
+                },
                 "compression": {"type": "number", "minimum": 0.01, "maximum": 1, "default": 0.5},
+                "cache_ttl_seconds": {
+                    "type": "number",
+                    "minimum": 0,
+                    "default": LIVE_CACHE_TTL_SECONDS,
+                    "description": "Maximum age for the Python-side live snapshot cache when refresh is false.",
+                },
                 "item_id": {"type": "string", "description": "Item id from live list/search, object oid, or memory address."},
                 "include_raw": {"type": "boolean", "default": False},
                 "response_format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown"},
@@ -1088,7 +1308,7 @@ TOOLS = {
         },
     },
     "lookin_live_invoke_method": {
-        "description": "Invoke a no-argument method/property on the selected live object or an explicit object oid.",
+        "description": "Invoke an allowed no-argument method on the selected live object or an explicit object oid.",
         "handler": tool_live_invoke_method,
         "annotations": {
             "readOnlyHint": False,
@@ -1100,7 +1320,11 @@ TOOLS = {
             "type": "object",
             "properties": {
                 "bridge_url": {"type": "string", "default": DEFAULT_BRIDGE_URL},
-                "method": {"type": "string", "description": "No-argument Objective-C selector or property name."},
+                "method": {
+                    "type": "string",
+                    "enum": sorted(ALLOWED_INVOKE_METHODS),
+                    "description": "Allowed no-argument Objective-C selector.",
+                },
                 "target": {
                     "type": "string",
                     "enum": ["selected_view", "selected_layer", "selected_controller", "view", "layer", "controller"],

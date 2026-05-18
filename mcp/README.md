@@ -11,17 +11,19 @@
 - `lookin_search_hierarchy`：按类名、标题、subtitle、对象 id、内存地址或已解码字段搜索。
 - `lookin_get_item`：按列表 id、对象 oid 或内存地址查看单个节点详情。
 - `lookin_live_status`：查看 Lookin App 本地 bridge 是否可用、当前是否有连接 App。
+- `lookin_live_get_selected_item`：读取 Lookin 当前选中层的轻量信息，包括 view/layer/controller oid 和 frame。
+- `lookin_live_list_writable_properties`：列出当前 MCP 支持的写属性、约束属性、值格式和允许调用的无参方法。
 - `lookin_live_inspect_current`：实时拉取当前连接 App 并查看概要。
 - `lookin_live_list_hierarchy`：实时拉取当前连接 App 并分页列出 UI 层级。
 - `lookin_live_search_hierarchy`：实时拉取当前连接 App 并搜索 UI 层级。
-- `lookin_live_get_item`：实时拉取当前连接 App 并查看单节点详情。
+- `lookin_live_get_item`：查看单节点详情，默认复用最近一次实时 snapshot，避免 search 后重复刷新。
 - `lookin_live_capture_current_layer_screenshot`：截取 Lookin 当前选中层的截图并保存为本地 TIFF 文件。
-- `lookin_live_invoke_method`：对当前选中对象或指定 oid 调用无参方法/属性。
+- `lookin_live_invoke_method`：对当前选中对象或指定 oid 调用白名单内无参方法。
 - `lookin_live_set_selected_frame`：修改 Lookin 当前选中层的 `frame`。
 - `lookin_live_set_view_property`：修改当前选中 view/layer 的常用属性，覆盖 UIView、UILabel、UIButton、UIImageView、UIScrollView、UITableView、UICollectionView、UITableViewCell、UICollectionViewCell、UITextView、UITextField 等基础控件。
 - `lookin_live_set_constraint_property`：按显式 NSLayoutConstraint oid 修改 `constant` / `priority` / `active`。
 
-除截图文件写出和两个 `lookin_live_*` 写工具外，其余工具都是只读操作。
+除截图文件写出和 `lookin_live_invoke_method`、`lookin_live_set_selected_frame`、`lookin_live_set_view_property`、`lookin_live_set_constraint_property` 四个写工具外，其余工具都是只读操作。
 
 ## 客户端配置
 
@@ -87,6 +89,22 @@
 - `group`：取当前层和子层组合截图。
 - `solo`：只取当前层截图。
 
+读取当前选中层信息：
+
+```json
+{
+  "response_format": "json"
+}
+```
+
+查询可写属性和允许的方法：
+
+```json
+{
+  "response_format": "json"
+}
+```
+
 ### 受限写操作
 
 调用当前选中 view 的无参方法：
@@ -97,6 +115,14 @@
   "target": "selected_view"
 }
 ```
+
+为了降低误操作风险，`lookin_live_invoke_method` 只允许以下无参方法：
+
+- `setNeedsLayout`
+- `layoutIfNeeded`
+- `setNeedsDisplay`
+- `reloadData`
+- `reloadInputViews`
 
 `target` 支持：
 
@@ -182,7 +208,7 @@
 ## 写操作边界
 
 - 只开放受限写入口：`POST /invoke-method`、`POST /selected-frame`、`POST /set-property`、`POST /set-constraint-property`。
-- `lookin_live_invoke_method` 只支持无参 selector 或属性名，不支持带 `:` 的方法。
+- `lookin_live_invoke_method` 只支持白名单内的无参 selector，不支持任意 selector 或带 `:` 的方法。
 - `lookin_live_set_selected_frame` 只修改当前选中层的 `frame`。
 - `lookin_live_set_view_property` 只支持内置白名单属性，不开放任意 selector。
 - `lookin_live_set_constraint_property` 只支持显式 constraint oid 的 `constant`、`priority`、`active`。
